@@ -1,91 +1,66 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-校园网自动登录程序
-支持开机自动连接校园网
-"""
+"""校园网自动登录程序"""
 
+import os
 import sys
 import time
 import logging
+import subprocess
 from datetime import datetime
 from login import CampusNetworkLogin
-from config import Config
+from config import Config, BASE_DIR
 
-# 配置日志
+# 日志配置
+log_path = os.path.join(BASE_DIR, 'campus_network.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('campus_network.log', encoding='utf-8'),
+        logging.FileHandler(log_path, encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger(__name__)
 
-
-def check_network_connection():
-    """检查网络连接状态"""
-    import subprocess
-    try:
-        # 尝试ping网关
-        result = subprocess.run(
-            ['ping', '-n', '1', '-w', '1000', '172.16.4.14'],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        return result.returncode == 0
-    except:
-        return False
+AUTH_SERVER = "172.16.4.14"
 
 
 def wait_for_network(timeout=60):
-    """等待网络连接就绪"""
+    """等待网络连接就绪（ping 认证服务器）"""
     logger.info("等待网络连接就绪...")
-    start_time = time.time()
-
-    while time.time() - start_time < timeout:
-        if check_network_connection():
-            logger.info("网络连接已就绪")
-            return True
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            result = subprocess.run(
+                ['ping', '-n', '1', '-w', '1000', AUTH_SERVER],
+                capture_output=True, timeout=5
+            )
+            if result.returncode == 0:
+                logger.info("网络连接已就绪")
+                return True
+        except Exception:
+            pass
         time.sleep(2)
-
     logger.warning("等待网络连接超时")
     return False
 
 
 def main():
-    """主函数"""
     logger.info("=" * 50)
-    logger.info("校园网自动登录程序启动")
-    logger.info(f"启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"校园网自动登录 - {datetime.now():%Y-%m-%d %H:%M:%S}")
     logger.info("=" * 50)
 
-    # 加载配置
     config = Config()
 
-    # 等待网络连接
-    if not wait_for_network():
-        logger.error("无法连接到网络，请检查网络设置")
+    if not wait_for_network(config.network_timeout):
+        logger.error("无法连接到网络")
         return False
 
-    # 创建登录实例
     login = CampusNetworkLogin(config)
-
-    # 尝试登录
-    max_retries = 3
-    for attempt in range(max_retries):
-        logger.info(f"尝试登录... (第 {attempt + 1}/{max_retries} 次)")
-
-        success = login.login()
-        if success:
-            logger.info("登录成功！")
-            return True
-
-        logger.warning(f"第 {attempt + 1} 次登录失败")
-        if attempt < max_retries - 1:
-            time.sleep(5)
+    if login.login():
+        logger.info("登录成功！")
+        return True
 
     logger.error("登录失败，请检查账号密码或网络设置")
     return False
@@ -93,8 +68,7 @@ def main():
 
 if __name__ == "__main__":
     try:
-        success = main()
-        sys.exit(0 if success else 1)
+        sys.exit(0 if main() else 1)
     except KeyboardInterrupt:
         logger.info("程序被用户中断")
         sys.exit(0)
